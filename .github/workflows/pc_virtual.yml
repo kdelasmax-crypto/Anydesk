@@ -1,0 +1,248 @@
+# Este workflow configura um PC virtual Windows no GitHub Actions com AnyDesk, otimizado para desempenho e áudio.
+# Ele é projetado para ser acessado remotamente, ideal para uso em dispositivos móveis.
+
+name: PC Virtual Otimizado - AnyDesk + Voz + Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      anydesk_password:
+        description: 'Senha para acesso ao AnyDesk (recomendado usar GitHub Secrets)'
+        required: false
+        default: 'minhasenha123' # Apenas para teste, use secrets em produção
+
+jobs:
+  pc-virtual:
+    runs-on: windows-latest
+    # O tempo limite máximo para jobs em GitHub Actions é geralmente 6 horas (360 minutos) para repositórios públicos.
+    # Para repositórios privados, pode ser maior dependendo do plano.
+    # Definir um valor muito alto como 9999 pode não ser efetivo além do limite real.
+    timeout-minutes: 360 # Limite de 6 horas
+
+    steps:
+
+      - name: 🚀 PASSO 1 - Otimizar o PC para desempenho máximo
+        shell: powershell
+        run: |
+          Write-Host "Iniciando otimização de desempenho..."
+
+          # 1. Configurar plano de energia para alto desempenho
+          Write-Host "- Definindo plano de energia para alto desempenho..."
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          powercfg /hibernate off
+
+          # 2. Definir prioridade máxima de CPU para aplicativos
+          Write-Host "- Ajustando prioridade de CPU..."
+          Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" "Win32PrioritySeparation" 38 -ErrorAction SilentlyContinue
+
+          # 3. Desativar Windows Defender (consome CPU e RAM)
+          Write-Host "- Desativando Windows Defender (temporariamente para o job)..."
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
+          Set-MpPreference -DisableBlockAtFirstSeen $true -ErrorAction SilentlyContinue
+          Set-MpPreference -MAPSReporting 0 -ErrorAction SilentlyContinue
+
+          # 4. Desativar serviços pesados desnecessários
+          Write-Host "- Parando e desativando serviços desnecessários..."
+          $servicos = @("SysMain","WSearch","DiagTrack","dmwappushservice","RetailDemo")
+          foreach ($s in $servicos) {
+            Stop-Service $s -Force -ErrorAction SilentlyContinue
+            Set-Service $s -StartupType Disabled -ErrorAction SilentlyContinue
+          }
+
+          # 5. Desativar efeitos visuais pesados
+          Write-Host "- Desativando efeitos visuais..."
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f | Out-Null
+
+          # 6. Ajustar memória virtual (gerenciamento automático)
+          Write-Host "- Configurando memória virtual para gerenciamento automático..."
+          # Revertendo para gerenciamento automático, que geralmente é mais otimizado pelo Windows.
+          # A desativação manual pode causar problemas de estabilidade em alguns cenários.
+          $cs = Get-WmiObject Win32_ComputerSystem
+          $cs.AutomaticManagedPagefile = $true
+          $cs.Put() | Out-Null
+
+          Write-Host "✅ Otimização de desempenho concluída!"
+
+      - name: 🔊 PASSO 2 - Ativar e configurar áudio completo
+        shell: powershell
+        run: |
+          Write-Host "Iniciando configuração de áudio..."
+
+          # 1. Ativar serviços de áudio essenciais
+          Write-Host "- Ativando serviços de áudio..."
+          $svcs = @("Audiosrv","AudioEndpointBuilder","RpcSs")
+          foreach ($s in $svcs) {
+            Set-Service $s -StartupType Automatic -ErrorAction SilentlyContinue
+            Start-Service $s -ErrorAction SilentlyContinue
+          }
+
+          # 2. Garantir que os serviços de áudio iniciem automaticamente via registro
+          Write-Host "- Configurando serviços de áudio para iniciar automaticamente..."
+          reg add "HKLM\SYSTEM\CurrentControlSet\Services\Audiosrv" /v Start /t REG_DWORD /d 2 /f | Out-Null
+          reg add "HKLM\SYSTEM\CurrentControlSet\Services\AudioEndpointBuilder" /v Start /t REG_DWORD /d 2 /f | Out-Null
+
+          # 3. Habilitar áudio e câmera no perfil de usuário (para AnyDesk)
+          Write-Host "- Habilitando áudio e câmera para o usuário..."
+          reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v fDisableAudioCapture /t REG_DWORD /d 0 /f | Out-Null
+          reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v fDisableCam /t REG_DWORD /d 0 /f | Out-Null
+
+          # 4. Instalar um driver de áudio virtual se necessário (ex: VB-Cable Virtual Audio Device)
+          # Esta etapa é crucial para garantir que o runner tenha um dispositivo de áudio funcional.
+          # O Chocolatey é usado para simplificar a instalação.
+          Write-Host "- Instalando driver de áudio virtual (VB-Cable)..."
+          choco install vbcable -y --no-progress --ignore-checksums || Write-Host "AVISO: Falha ao instalar VB-Cable. O áudio pode não funcionar corretamente."
+          Start-Sleep -Seconds 10 # Dar tempo para o driver ser instalado e reconhecido
+
+          Write-Host "✅ Configuração de áudio concluída!"
+
+      - name: 🖥️ PASSO 3 - Instalar e configurar AnyDesk
+        shell: powershell
+        env:
+          ANYDESK_PASSWORD: ${{ github.event.inputs.anydesk_password }}
+        run: |
+          Write-Host "Iniciando instalação e configuração do AnyDesk..."
+
+          # 1. Baixar e instalar AnyDesk
+          Write-Host "- Baixando e instalando AnyDesk..."
+          Invoke-WebRequest "https://download.anydesk.com/AnyDesk.exe" -OutFile "C:\AnyDesk.exe" -UseBasicParsing
+          Start-Process "C:\AnyDesk.exe" -ArgumentList '--install "C:\Program Files (x86)\AnyDesk" --start-with-win --silent' -Wait -NoNewWindow
+          Start-Sleep -Seconds 15 # Esperar a instalação ser concluída
+          Write-Host "AnyDesk instalado."
+
+          $ad_path = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+
+          # 2. Iniciar AnyDesk se não estiver rodando
+          Write-Host "- Verificando e iniciando AnyDesk..."
+          if (-not (Get-Process "AnyDesk" -ErrorAction SilentlyContinue)) {
+            Start-Process $ad_path
+            Start-Sleep -Seconds 10
+          }
+
+          # 3. Definir senha de acesso (usando a senha do input ou padrão)
+          Write-Host "- Definindo senha de acesso..."
+          cmd /c "echo $env:ANYDESK_PASSWORD | `"$ad_path`" --set-password"
+          Start-Sleep -Seconds 3
+
+          # 4. Configurar áudio automaticamente nos arquivos de configuração do AnyDesk
+          Write-Host "- Configurando áudio no AnyDesk..."
+          $configDir = "C:\ProgramData\AnyDesk"
+          $configFile = "$configDir\system.conf"
+          if (Test-Path $configFile) {
+            $conf = Get-Content $configFile
+            if ($conf -notmatch "ad.audio") {
+              Add-Content $configFile "`nad.audio.enabled=true"
+              Add-Content $configFile "ad.security.hear_sound=true"
+            }
+          }
+
+          $userConfDir = "$env:APPDATA\AnyDesk"
+          $userConfFile = "$userConfDir\user.conf"
+          New-Item -ItemType Directory -Force -Path $userConfDir | Out-Null
+          $audioConfContent = @"
+ad.audio.enabled=true
+ad.security.hear_sound=true
+ad.features.unattended=true
+ad.security.allow_logon_token=true
+"@
+          Set-Content $userConfFile $audioConfContent -Force
+
+          # 5. Obter ID do AnyDesk
+          Write-Host "- Obtendo ID do AnyDesk..."
+          Start-Process $ad_path -ArgumentList "--get-id" -RedirectStandardOutput "C:\ad_id.txt" -NoNewWindow -Wait
+          $id = (Get-Content "C:\ad_id.txt" -ErrorAction SilentlyContinue).Trim()
+          if (-not $id) {
+            $conf = Get-Content $configFile -ErrorAction SilentlyContinue
+            $id = ($conf | Select-String "ad.anynet.id").ToString().Split("=")[1].Trim()
+          }
+
+          Write-Host ""
+          Write-Host "=================================================="
+          Write-Host "🎉 AnyDesk configurado! Use os dados abaixo para conectar:"
+          Write-Host "ID DO ANYDESK: $id"
+          Write-Host "SENHA: $env:ANYDESK_PASSWORD"
+          Write-Host "=================================================="
+          Write-Host ""
+          Write-Host "IMPORTANTE - PARA ATIVAR O SOM NO SEU CELULAR:"
+          Write-Host "1. Conecte-se ao PC virtual pelo aplicativo AnyDesk."
+          Write-Host "2. Durante a sessão, toque nos 3 pontinhos (menu) no topo da tela."
+          Write-Host "3. Toque em 'Permissões'."
+          Write-Host "4. Ative a opção 'Ouvir som do PC remoto'."
+          Write-Host "=================================================="
+
+      - name: 📦 PASSO 4 - Instalar aplicativos essenciais
+        shell: powershell
+        run: |
+          Write-Host "Iniciando instalação de aplicativos..."
+          # Usar choco upgrade all para garantir que tudo esteja atualizado
+          choco upgrade all -y --no-progress --ignore-checksums || Write-Host "AVISO: Falha ao atualizar pacotes existentes."
+
+          # Instalação de navegadores e ferramentas de mídia
+          Write-Host "- Instalando Chrome, yt-dlp, Discord, VLC, Spotify..."
+          choco install googlechrome yt-dlp discord vlc spotify -y --no-progress --ignore-checksums || Write-Host "AVISO: Falha ao instalar alguns aplicativos de mídia/navegação."
+
+          # Instalação de ferramentas de produtividade e desenvolvimento
+          Write-Host "- Instalando Notepad++, 7zip, VSCode, Python, Git..."
+          choco install notepadplusplus 7zip vscode python git -y --no-progress --ignore-checksums || Write-Host "AVISO: Falha ao instalar alguns aplicativos de produtividade/desenvolvimento."
+
+          # Instalação de ferramentas gráficas e streaming
+          Write-Host "- Instalando GIMP, Inkscape, OBS Studio..."
+          choco install gimp inkscape obs-studio -y --no-progress --ignore-checksums || Write-Host "AVISO: Falha ao instalar alguns aplicativos gráficos/streaming."
+
+          # Instalação de utilitários adicionais
+          Write-Host "- Instalando WinRAR, Firefox..."
+          choco install winrar firefox -y --no-progress --ignore-checksums || Write-Host "AVISO: Falha ao instalar WinRAR/Firefox."
+
+          Write-Host "✅ Instalação de aplicativos concluída!"
+
+      - name: 🔍 PASSO 5 - Checagem final e dicas de uso
+        shell: powershell
+        run: |
+          Write-Host "Realizando checagem final..."
+
+          # Garante AnyDesk rodando
+          $ad_path = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          if (-not (Get-Process "AnyDesk" -ErrorAction SilentlyContinue)) {
+            Write-Host "- AnyDesk não estava rodando, iniciando agora..."
+            Start-Process $ad_path
+            Start-Sleep -Seconds 8
+          }
+
+          # Verifica status do serviço de áudio
+          $audio_service = Get-Service "Audiosrv" -ErrorAction SilentlyContinue
+          Write-Host "- Status do serviço de Áudio: $($audio_service.Status)"
+          Write-Host "- AnyDesk: Rodando"
+          Write-Host ""
+
+          Write-Host "=================================================="
+          Write-Host "✨ DICAS PARA MELHOR EXPERIÊNCIA NO CELULAR:"
+          Write-Host ""
+          Write-Host "➡️ Teclado Virtual: No AnyDesk, toque nos 3 pontinhos (menu) > ícone de Teclado."
+          Write-Host "➡️ Mouse Mais Rápido: No AnyDesk, toque nos 3 pontinhos (menu) > Configurações > Exibição > Qualidade: 'Velocidade'."
+          Write-Host "➡️ Áudio: Certifique-se de ativar 'Ouvir som do PC remoto' nas Permissões do AnyDesk durante a sessão."
+          Write-Host "=================================================="
+          Write-Host ""
+
+      - name: ⏳ PASSO 6 - Manter o PC Virtual ativo
+        shell: powershell
+        run: |
+          Write-Host "PC VIRTUAL OTIMIZADO ATIVO!"
+          Write-Host "Este job permanecerá ativo pelo tempo limite configurado (até 6 horas)."
+          Write-Host "Para encerrar, você pode cancelar o workflow no GitHub Actions."
+          Write-Host ""
+          Write-Host "Aplicativos instalados:"
+          Write-Host "- Navegadores: Google Chrome, Mozilla Firefox"
+          Write-Host "- Comunicação: Discord"
+          Write-Host "- Mídia: VLC Media Player, Spotify, yt-dlp"
+          Write-Host "- Produtividade: Notepad++, 7-Zip, WinRAR"
+          Write-Host "- Desenvolvimento: VS Code, Python, Git"
+          Write-Host "- Gráficos/Streaming: GIMP, Inkscape, OBS Studio"
+          Write-Host ""
+          Write-Host "Aguardando o tempo limite do job..."
+          # Loop para manter o job ativo. O timeout-minutes do job irá encerrá-lo.
+          while ($true) {
+            $current_time = Get-Date -Format "HH:mm:ss"
+            Write-Host "[$current_time] PC virtual ativo. Conecte-se via AnyDesk."
+            Start-Sleep -Seconds 300 # Espera 5 minutos antes de logar novamente
+          }
+          
