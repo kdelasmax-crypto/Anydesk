@@ -1,5 +1,5 @@
 # Este workflow configura um PC virtual Windows no GitHub Actions com AnyDesk, otimizado para desempenho e áudio.
-# Ele é projetado para ser acessado remotamente, ideal para uso em dispositivos móveis.
+# Ele é projetado para ser visto remotamente, ideal para uso em dispositivos móveis.
 
 name: PC Virtual Otimizado - AnyDesk + Voz + Apps
 
